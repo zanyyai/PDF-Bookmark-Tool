@@ -1,40 +1,48 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 
-MainGui := Gui("+Resize", "PDF 智能书签写入工具 (偏移量实时同步版)")
+IniPath := A_ScriptDir . "\rules_history.ini"
+
+MainGui := Gui("+Resize", "PDF 智能书签写入工具 (历史规则增强版)")
 
 ; 1. 文件选择
 MainGui.Add("Text", "x10 y15 w70 h20", "PDF 文件:")
 EditPdfPath := MainGui.Add("Edit", "x80 y12 w380 h20", "")
 BtnBrowse := MainGui.Add("Button", "x470 y10 w80 h24", "浏览...")
 
-; 2. 页码偏移量 (绑定 Change 事件，修改即实时刷新列表)
+; 2. 页码偏移量
 MainGui.Add("Text", "x10 y45 w80 h20", "页码偏移:")
 EditOffset := MainGui.Add("Edit", "x80 y42 w60 h20", "0")
 MainGui.Add("Text", "x150 y45 w390 h20", "(PDF实际页码 = 目录印刷页码 + 偏移量，支持负数)")
 
-; 3. 多级正则匹配规则配置区
-MainGui.Add("GroupBox", "x10 y70 w540 h150", "多级书签匹配规则配置 (留空表示不启用该级)")
+; 3. 多级正则匹配规则配置区 (改用 ComboBox 下拉选择框)
+MainGui.Add("GroupBox", "x10 y70 w540 h150", "多级书签匹配规则配置 (可下拉选择历史规则)")
 
 MainGui.Add("Text", "x20 y92 w70 h20", "一级书签:")
-EditRegexL1 := MainGui.Add("Edit", "x90 y89 w170 h20", "^[一二三四五六七八九十]+[、\.]")
+CboxRegexL1 := MainGui.Add("ComboBox", "x90 y89 w170 h150", ["^[一二三四五六七八九十]+[、\.]"])
+CboxRegexL1.Text := "^[一二三四五六七八九十]+[、\.]"
 
 MainGui.Add("Text", "x270 y92 w70 h20", "二级书签:")
-EditRegexL2 := MainGui.Add("Edit", "x340 y89 w200 h20", "^【.*】")
+CboxRegexL2 := MainGui.Add("ComboBox", "x340 y89 w200 h150", ["^【.*】"])
+CboxRegexL2.Text := "^【.*】"
 
 MainGui.Add("Text", "x20 y122 w70 h20", "三级书签:")
-EditRegexL3 := MainGui.Add("Edit", "x90 y119 w170 h20", "^\d+\.\s*")
+CboxRegexL3 := MainGui.Add("ComboBox", "x90 y119 w170 h150", ["^\d+\.\s*"])
+CboxRegexL3.Text := "^\d+\.\s*"
 
 MainGui.Add("Text", "x270 y122 w70 h20", "行匹配:")
-EditRegexLine := MainGui.Add("Edit", "x340 y119 w200 h20", "\d+\s*页?\s*$")
+CboxRegexLine := MainGui.Add("ComboBox", "x340 y119 w200 h150", ["\d+\s*页?\s*$"])
+CboxRegexLine.Text := "\d+\s*页?\s*$"
 
 MainGui.Add("Text", "x20 y152 w70 h20", "底级书签:")
-EditRegexTitle := MainGui.Add("Edit", "x90 y149 w170 h20", "^(.*?)(?=\s*[\.·…\s\-—–|_]*[pP|第]?\s*\d+\s*页?$)")
+CboxRegexTitle := MainGui.Add("ComboBox", "x90 y149 w170 h150", ["^(.*?)(?=\s*[\.·…\s\-—–|_]*[pP|第]?\s*\d+\s*页?$)"])
+CboxRegexTitle.Text := "^(.*?)(?=\s*[\.·…\s\-—–|_]*[pP|第]?\s*\d+\s*页?$)"
 
 MainGui.Add("Text", "x270 y152 w70 h20", "页码提取:")
-EditRegexPage := MainGui.Add("Edit", "x340 y149 w200 h20", "(\d+)\s*页?\s*$")
+CboxRegexPage := MainGui.Add("ComboBox", "x340 y149 w200 h150", ["(\d+)\s*页?\s*$"])
+CboxRegexPage.Text := "(\d+)\s*页?\s*$"
 
-MainGui.Add("Text", "x20 y185 w520 h20", "💡 说明：修改上方偏移量时，列表中的目标页码会自动实时重新计算。")
+MainGui.Add("Text", "x20 y185 w520 h20", "💡 说明：下拉可切换历史规则。写入成功后，新规则将以示例样本命名自动保存。")
 
 ; 4. 文本粘贴区
 MainGui.Add("Text", "x10 y225 w200 h20", "请粘贴目录文本:")
@@ -53,13 +61,17 @@ LV.ModifyCol(4, 70)
 ; 7. 执行按钮
 BtnInsert := MainGui.Add("Button", "x10 y542 w540 h35", "🚀 一键写入目录书签到 PDF")
 
+; 全局变量：记录解析时各项捕获到的首个样本名称
+Global FirstMatches := Map("L1", "", "L2", "", "L3", "", "Line", "", "Title", "", "Page", "")
+
 ; 事件绑定
 BtnBrowse.OnEvent("Click", (*) => BrowsePDF())
 BtnParse.OnEvent("Click", (*) => ParseTextToLV())
 BtnInsert.OnEvent("Click", (*) => WriteToPDF())
-
-; 核心变更：偏移量修改时，如果粘贴区有内容，自动实时更新列表
 EditOffset.OnEvent("Change", (*) => AutoRefreshLV())
+
+; 初始化时加载 INI 历史规则到下拉框
+LoadHistoryToComboBoxes()
 
 MainGui.Show("w560 h585")
 
@@ -75,7 +87,6 @@ AutoRefreshLV() {
     }
 }
 
-; 安全获取数值型的偏移量
 GetOffsetValue() {
     rawStr := Trim(EditOffset.Value)
     if (rawStr == "" || rawStr == "-")
@@ -85,6 +96,16 @@ GetOffsetValue() {
     return 0
 }
 
+; 从 UI 的 ComboBox 提取当前正则（去除下拉菜单展示的辅助前缀）
+GetCleanRegex(cboxObj) {
+    rawVal := cboxObj.Text
+    ; 修复：移除了 &m 后面多余的一个右括号
+    if RegExMatch(rawVal, "^\[(.*?)\]\s*(.*)$", &m) {
+        return m[2]
+    }
+    return rawVal
+}
+
 ParseTextToLV() {
     rawText := EditInputText.Value
     if (Trim(rawText) == "") {
@@ -92,14 +113,16 @@ ParseTextToLV() {
         return
     }
 
-    regL1 := EditRegexL1.Value
-    regL2 := EditRegexL2.Value
-    regL3 := EditRegexL3.Value
-    regLine := EditRegexLine.Value
-    regTitle := EditRegexTitle.Value
-    regPage := EditRegexPage.Value
+    ; 清空历史样本记录
+    Global FirstMatches := Map("L1", "", "L2", "", "L3", "", "Line", "", "Title", "", "Page", "")
+
+    regL1 := GetCleanRegex(CboxRegexL1)
+    regL2 := GetCleanRegex(CboxRegexL2)
+    regL3 := GetCleanRegex(CboxRegexL3)
+    regLine := GetCleanRegex(CboxRegexLine)
+    regTitle := GetCleanRegex(CboxRegexTitle)
+    regPage := GetCleanRegex(CboxRegexPage)
     
-    ; 使用安全计算偏移量逻辑
     offset := GetOffsetValue()
 
     LV.Delete()
@@ -109,7 +132,6 @@ ParseTextToLV() {
     lines := StrSplit(cleanText, "`n")
 
     parsedItems := []
-    
     activeL1 := ""
     activeL2 := ""
     activeL3 := ""
@@ -122,6 +144,8 @@ ParseTextToLV() {
         linePage := 0
         if (regPage != "" && RegExMatch(lineStr, regPage, &mPage)) {
             linePage := Integer(mPage[1] != "" ? mPage[1] : mPage[0])
+            if (FirstMatches["Page"] == "")
+                FirstMatches["Page"] := "样本:" . linePage
         }
 
         ; 1. 一级高级书签
@@ -131,6 +155,9 @@ ParseTextToLV() {
             activeL2 := ""
             activeL3 := ""
             
+            if (FirstMatches["L1"] == "")
+                FirstMatches["L1"] := activeL1
+
             item := Map("type", "HEADER", "title", activeL1, "page", linePage, "level", 1)
             parsedItems.Push(item)
             continue
@@ -142,6 +169,9 @@ ParseTextToLV() {
             activeL2 := Trim(cleanTitle)
             activeL3 := ""
             
+            if (FirstMatches["L2"] == "")
+                FirstMatches["L2"] := activeL2
+
             lvl := (activeL1 != "" ? 1 : 0) + 1
             item := Map("type", "HEADER", "title", activeL2, "page", linePage, "level", lvl)
             parsedItems.Push(item)
@@ -153,6 +183,9 @@ ParseTextToLV() {
             cleanTitle := RegExReplace(lineStr, "[\.·…\s\-—–|_]*[pP|第]?\s*\d+\s*页?$", "")
             activeL3 := Trim(cleanTitle)
             
+            if (FirstMatches["L3"] == "")
+                FirstMatches["L3"] := activeL3
+
             lvl := (activeL1 != "" ? 1 : 0) + (activeL2 != "" ? 1 : 0) + 1
             item := Map("type", "HEADER", "title", activeL3, "page", linePage, "level", lvl)
             parsedItems.Push(item)
@@ -162,11 +195,17 @@ ParseTextToLV() {
         ; 4. 底级书签
         isMatchLine := (regLine == "" || RegExMatch(lineStr, regLine))
         if (isMatchLine && linePage > 0) {
+            if (FirstMatches["Line"] == "" && regLine != "")
+                FirstMatches["Line"] := "匹配行:" . SubStr(lineStr, 1, 15)
+
             titleStr := lineStr
             if (regTitle != "" && RegExMatch(lineStr, regTitle, &mTitle)) {
                 titleStr := Trim(mTitle[1] != "" ? mTitle[1] : mTitle[0])
             }
             cleanTitle := RegExReplace(titleStr, "^[\s\t*★]+", "")
+
+            if (FirstMatches["Title"] == "")
+                FirstMatches["Title"] := cleanTitle
 
             parentCount := (activeL1 != "" ? 1 : 0) + (activeL2 != "" ? 1 : 0) + (activeL3 != "" ? 1 : 0)
             leafLvl := parentCount + 1
@@ -176,11 +215,10 @@ ParseTextToLV() {
         }
     }
 
-    ; 后处理：补全无页码的高级书签
+    ; 补全无页码的高级书签
     Loop parsedItems.Length {
         idx := A_Index
         item := parsedItems[idx]
-        
         if (item["page"] == 0) {
             foundPage := 1
             Loop (parsedItems.Length - idx) {
@@ -194,14 +232,12 @@ ParseTextToLV() {
         }
     }
 
-    ; 输出渲染到 ListView
+    ; 渲染 ListView
     Index := 1
     for item in parsedItems {
         finalPage := item["page"] + offset
-        ; 保证最终页码至少为 1，防止出现 0 或负数页码
-        if (finalPage < 1) {
+        if (finalPage < 1)
             finalPage := 1
-        }
         LV.Add("", Index, item["level"], item["title"], finalPage)
         Index++
     }
@@ -218,7 +254,6 @@ WriteToPDF() {
         return
     }
     
-    ; 写入前强制按最新偏移量重新计算一次，确保绝对同步
     if (Trim(EditInputText.Value) != "") {
         ParseTextToLV()
     }
@@ -242,23 +277,140 @@ WriteToPDF() {
     params := Map("pdf", PdfPath, "toc", toc, "output", outputPath)
     jsonStr := MapToJson(params)
 
-    buf := Buffer(StrPut(jsonStr, "UTF-8"))
-    StrPut(jsonStr, buf, "UTF-8")
-    DllCall("crypt32\CryptBinaryToStringW", "Ptr", buf, "UInt", buf.Size - 1, "UInt", 0x40000001, "Ptr", 0, "UInt*", &Size := 0)
-    outBuf := Buffer(Size * 2)
-    DllCall("crypt32\CryptBinaryToStringW", "Ptr", buf, "UInt", buf.Size - 1, "UInt", 0x40000001, "Ptr", outBuf, "UInt*", &Size)
-    b64Str := StrGet(outBuf)
+    ; 1. 定义临时文件路径
+    tmpJsonPath := A_ScriptDir . "\_temp_toc_data.json"
 
-    cmd := 'python "' . A_ScriptDir . '\pdf_engine_Lite.py" "' . b64Str . '"'
+    ; 2. 写入 JSON 数据 (修改点：使用 "UTF-8-RAW" 避免写入 BOM)
+    if FileExist(tmpJsonPath)
+        FileDelete(tmpJsonPath)
+    FileAppend(jsonStr, tmpJsonPath, "UTF-8-RAW")
+
+    cmd := 'python "' . A_ScriptDir . '\pdf_engine_Lite.py" "' . tmpJsonPath . '"'
     shell := ComObject("WScript.Shell")
     exec := shell.Exec(cmd)
     res := exec.StdOut.ReadAll()
 
+    if FileExist(tmpJsonPath)
+        FileDelete(tmpJsonPath)
+
     if InStr(res, "success") {
+        ; =============== 执行写入成功后，对规则进行历史保存 ===============
+        SaveRulesToHistory()
+        LoadHistoryToComboBoxes() ; 动态刷新下拉菜单
+        
         MsgBox("书签写入成功！文件保存在：`n" . outputPath, "成功", 64)
         Run(outputPath)
     } else {
         MsgBox("写入失败：" . res, "错误", 16)
+    }
+}
+
+; 保存规则至 INI 文件（含防重逻辑）
+SaveRulesToHistory() {
+    categories := [
+        Map("section", "RegexL1", "cbox", CboxRegexL1, "sample", FirstMatches["L1"]),
+        Map("section", "RegexL2", "cbox", CboxRegexL2, "sample", FirstMatches["L2"]),
+        Map("section", "RegexL3", "cbox", CboxRegexL3, "sample", FirstMatches["L3"]),
+        Map("section", "RegexLine", "cbox", CboxRegexLine, "sample", FirstMatches["Line"]),
+        Map("section", "RegexTitle", "cbox", CboxRegexTitle, "sample", FirstMatches["Title"]),
+        Map("section", "RegexPage", "cbox", CboxRegexPage, "sample", FirstMatches["Page"])
+    ]
+
+    timeStr := FormatTime(, "yyyy-MM-dd HH:mm:ss")
+
+    for cat in categories {
+        regVal := GetCleanRegex(cat["cbox"])
+        if (Trim(regVal) == "")
+            continue
+
+        section := cat["section"]
+        
+        ; 检查是否已存在相同规则（防重）
+        isExist := false
+        try {
+            iniSectionText := IniRead(IniPath, section)
+            Loop Parse, iniSectionText, "`n", "`r" {
+                if (A_LoopField == "")
+                    continue
+                parts := StrSplit(A_LoopField, "=")
+                if (parts.Length >= 2) {
+                    valPart := parts[2]
+                    ; 抽取配置文件中的实际正则表达式
+                    if InStr(valPart, "|") {
+                        subParts := StrSplit(valPart, "|")
+                        savedRegex := Trim(subParts[subParts.Length])
+                    } else {
+                        savedRegex := Trim(valPart)
+                    }
+                    if (savedRegex == regVal) {
+                        isExist := true
+                        break
+                    }
+                }
+            }
+        }
+
+        ; 如果规则不存在，则新增存入 INI 文件
+        if (!isExist) {
+            sampleName := (cat["sample"] != "") ? SubStr(cat["sample"], 1, 20) : "未命名规则"
+            ; 计算递增 key (rule_1, rule_2 ...)
+            keyCount := 1
+            try {
+                secContent := IniRead(IniPath, section)
+                for line in StrSplit(secContent, "`n") {
+                    if (Trim(line) != "")
+                        keyCount++
+                }
+            }
+            
+            ruleEntry := timeStr . " | " . sampleName . " | " . regVal
+            IniWrite(ruleEntry, IniPath, section, "rule_" . keyCount)
+        }
+    }
+}
+
+; 从 INI 文件中读取历史规则装载到下拉菜单 (ComboBox) 中
+LoadHistoryToComboBoxes() {
+    if (!FileExist(IniPath))
+        return
+
+    mapping := Map(
+        "RegexL1", CboxRegexL1,
+        "RegexL2", CboxRegexL2,
+        "RegexL3", CboxRegexL3,
+        "RegexLine", CboxRegexLine,
+        "RegexTitle", CboxRegexTitle,
+        "RegexPage", CboxRegexPage
+    )
+
+    for section, cbox in mapping {
+        try {
+            secContent := IniRead(IniPath, section)
+            list := []
+            Loop Parse, secContent, "`n", "`r" {
+                if (A_LoopField == "")
+                    continue
+                parts := StrSplit(A_LoopField, "=")
+                if (parts.Length >= 2) {
+                    valStr := parts[2]
+                    if InStr(valStr, "|") {
+                        subParts := StrSplit(valStr, "|")
+                        ruleName := Trim(subParts[2])
+                        ruleRegex := Trim(subParts[3])
+                        displayStr := "[" . ruleName . "] " . ruleRegex
+                    } else {
+                        displayStr := Trim(valStr)
+                    }
+                    list.Push(displayStr)
+                }
+            }
+            if (list.Length > 0) {
+                currentVal := cbox.Text
+                cbox.Delete()
+                cbox.Add(list)
+                cbox.Text := currentVal
+            }
+        }
     }
 }
 

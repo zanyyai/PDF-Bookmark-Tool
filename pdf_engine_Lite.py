@@ -1,31 +1,28 @@
 import sys
 import json
-import base64
+import os
 import fitz  # PyMuPDF
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
+        print(json.dumps({"status": "error", "message": "未传入参数文件路径"}))
         sys.exit(1)
 
-    raw_input = sys.argv[1]
+    json_file_path = sys.argv[1]
     
     try:
-        try:
-            decoded_json = base64.b64decode(raw_input).decode('utf-8')
-        except Exception:
-            decoded_json = raw_input
-
-        params = json.loads(decoded_json)
+        # 修改点：encoding 改为 utf-8-sig，自动忽略 BOM 头
+        with open(json_file_path, "r", encoding="utf-8-sig") as f:
+            params = json.load(f)
         
         pdf_path = params["pdf"]
         toc_data = params["toc"]
         output_path = params["output"]
         
-        # PyMuPDF 要求的格式: [level, title, page]
         toc = [[int(item["level"]), item["title"], int(item["page"])] for item in toc_data]
         
         doc = fitz.open(pdf_path)
-        doc.set_toc(toc)  # 覆盖写入新书签目录
+        doc.set_toc(toc)
         doc.save(output_path)
         doc.close()
         
