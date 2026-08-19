@@ -3,11 +3,12 @@
 
 IniPath := A_ScriptDir . "\rules_history.ini"
 
-MainGui := Gui("+Resize", "PDF 智能书签写入工具 (历史规则增强版)")
+MainGui := Gui("+Resize", "PDF 智能书签写入工具 (历史规则与路径记忆增强版)")
 
-; 1. 文件选择
+; 1. 文件选择区 (缩窄 Edit 宽度，留出位置给超链接)
 MainGui.Add("Text", "x10 y15 w70 h20", "PDF 文件:")
-EditPdfPath := MainGui.Add("Edit", "x80 y12 w380 h20", "")
+EditPdfPath := MainGui.Add("Edit", "x80 y12 w290 h20", "")
+LinkOpenDir := MainGui.Add("Link", "x380 y15 w85 h20", '<a id="open_dir">打开所在文件夹</a>')
 BtnBrowse := MainGui.Add("Button", "x470 y10 w80 h24", "浏览...")
 
 ; 2. 页码偏移量
@@ -69,16 +70,61 @@ BtnBrowse.OnEvent("Click", (*) => BrowsePDF())
 BtnParse.OnEvent("Click", (*) => ParseTextToLV())
 BtnInsert.OnEvent("Click", (*) => WriteToPDF())
 EditOffset.OnEvent("Change", (*) => AutoRefreshLV())
+LinkOpenDir.OnEvent("Click", (*) => OpenPdfFolder())
+EditPdfPath.OnEvent("Change", (*) => SaveLastPdfPath(EditPdfPath.Value))
 
-; 初始化时加载 INI 历史规则到下拉框
+; 初始化：读取历史规则 & 恢复上次选择的 PDF 路径
 LoadHistoryToComboBoxes()
+LoadLastPdfPath()
 
 MainGui.Show("w560 h585")
 
 BrowsePDF() {
     SelectedFile := FileSelect(3, , "选择 PDF 文件", "PDF 文件 (*.pdf)")
-    if (SelectedFile != "")
+    if (SelectedFile != "") {
         EditPdfPath.Value := SelectedFile
+        SaveLastPdfPath(SelectedFile)
+    }
+}
+
+; 打开 PDF 所在文件夹并高亮定位文件
+OpenPdfFolder() {
+    PdfPath := EditPdfPath.Value
+    if (PdfPath == "") {
+        MsgBox("请先选择 PDF 文件！", "提示", 48)
+        return
+    }
+    
+    if FileExist(PdfPath) {
+        ; 打开文件夹并定位选中文件
+        Run('explorer.exe /select,"' . PdfPath . '"')
+    } else {
+        SplitPath(PdfPath, , &fdir)
+        if (fdir != "" && DirExist(fdir)) {
+            Run(fdir)
+        } else {
+            MsgBox("找不到该 PDF 文件或其所在目录！", "错误", 16)
+        }
+    }
+}
+
+; 保存上次使用的 PDF 路径到 INI 文件
+SaveLastPdfPath(path) {
+    if (path != "" && FileExist(path)) {
+        IniWrite(path, IniPath, "Config", "LastPdfPath")
+    }
+}
+
+; 加载上次使用的 PDF 路径
+LoadLastPdfPath() {
+    if FileExist(IniPath) {
+        try {
+            lastPath := IniRead(IniPath, "Config", "LastPdfPath", "")
+            if (lastPath != "" && FileExist(lastPath)) {
+                EditPdfPath.Value := lastPath
+            }
+        }
+    }
 }
 
 AutoRefreshLV() {
@@ -96,14 +142,12 @@ GetOffsetValue() {
     return 0
 }
 
-; 从 UI 的 ComboBox 提取当前正则（去除下拉菜单展示的辅助前缀）
 GetCleanRegex(cboxObj) {
     rawVal := cboxObj.Text
-    ; 修复：移除了 &m 后面多余的一个右括号
-    if RegExMatch(rawVal, "^\[(.*?)\]\s*(.*)$", &m) {
-        return m[2]
+    while RegExMatch(rawVal, "^\[.*?\]\s*(.*)$", &m) {
+        rawVal := m[1]
     }
-    return rawVal
+    return Trim(rawVal)
 }
 
 ParseTextToLV() {
@@ -113,7 +157,6 @@ ParseTextToLV() {
         return
     }
 
-    ; 清空历史样本记录
     Global FirstMatches := Map("L1", "", "L2", "", "L3", "", "Line", "", "Title", "", "Page", "")
 
     regL1 := GetCleanRegex(CboxRegexL1)
@@ -145,10 +188,9 @@ ParseTextToLV() {
         if (regPage != "" && RegExMatch(lineStr, regPage, &mPage)) {
             linePage := Integer(mPage[1] != "" ? mPage[1] : mPage[0])
             if (FirstMatches["Page"] == "")
-                FirstMatches["Page"] := "样本:" . linePage
+                FirstMatches["Page"] := "页码样本:" . linePage
         }
 
-        ; 1. 一级高级书签
         if (regL1 != "" && RegExMatch(lineStr, regL1)) {
             cleanTitle := RegExReplace(lineStr, "[\.·…\s\-—–|_]*[pP|第]?\s*\d+\s*页?$", "")
             activeL1 := Trim(cleanTitle)
@@ -163,7 +205,6 @@ ParseTextToLV() {
             continue
         }
 
-        ; 2. 二级高级书签
         if (regL2 != "" && RegExMatch(lineStr, regL2)) {
             cleanTitle := RegExReplace(lineStr, "[\.·…\s\-—–|_]*[pP|第]?\s*\d+\s*页?$", "")
             activeL2 := Trim(cleanTitle)
@@ -178,7 +219,6 @@ ParseTextToLV() {
             continue
         }
 
-        ; 3. 三级高级书签
         if (regL3 != "" && RegExMatch(lineStr, regL3)) {
             cleanTitle := RegExReplace(lineStr, "[\.·…\s\-—–|_]*[pP|第]?\s*\d+\s*页?$", "")
             activeL3 := Trim(cleanTitle)
@@ -192,7 +232,6 @@ ParseTextToLV() {
             continue
         }
 
-        ; 4. 底级书签
         isMatchLine := (regLine == "" || RegExMatch(lineStr, regLine))
         if (isMatchLine && linePage > 0) {
             if (FirstMatches["Line"] == "" && regLine != "")
@@ -215,7 +254,6 @@ ParseTextToLV() {
         }
     }
 
-    ; 补全无页码的高级书签
     Loop parsedItems.Length {
         idx := A_Index
         item := parsedItems[idx]
@@ -232,7 +270,6 @@ ParseTextToLV() {
         }
     }
 
-    ; 渲染 ListView
     Index := 1
     for item in parsedItems {
         finalPage := item["page"] + offset
@@ -277,10 +314,8 @@ WriteToPDF() {
     params := Map("pdf", PdfPath, "toc", toc, "output", outputPath)
     jsonStr := MapToJson(params)
 
-    ; 1. 定义临时文件路径
     tmpJsonPath := A_ScriptDir . "\_temp_toc_data.json"
 
-    ; 2. 写入 JSON 数据 (修改点：使用 "UTF-8-RAW" 避免写入 BOM)
     if FileExist(tmpJsonPath)
         FileDelete(tmpJsonPath)
     FileAppend(jsonStr, tmpJsonPath, "UTF-8-RAW")
@@ -294,9 +329,9 @@ WriteToPDF() {
         FileDelete(tmpJsonPath)
 
     if InStr(res, "success") {
-        ; =============== 执行写入成功后，对规则进行历史保存 ===============
         SaveRulesToHistory()
-        LoadHistoryToComboBoxes() ; 动态刷新下拉菜单
+        LoadHistoryToComboBoxes()
+        SaveLastPdfPath(PdfPath)
         
         MsgBox("书签写入成功！文件保存在：`n" . outputPath, "成功", 64)
         Run(outputPath)
@@ -305,7 +340,6 @@ WriteToPDF() {
     }
 }
 
-; 保存规则至 INI 文件（含防重逻辑）
 SaveRulesToHistory() {
     categories := [
         Map("section", "RegexL1", "cbox", CboxRegexL1, "sample", FirstMatches["L1"]),
@@ -317,31 +351,36 @@ SaveRulesToHistory() {
     ]
 
     timeStr := FormatTime(, "yyyy-MM-dd HH:mm:ss")
+    rawIniContent := FileExist(IniPath) ? FileRead(IniPath, "UTF-8") : ""
 
     for cat in categories {
         regVal := GetCleanRegex(cat["cbox"])
-        if (Trim(regVal) == "")
+        sampleText := Trim(cat["sample"])
+
+        if (regVal == "" || sampleText == "")
             continue
 
         section := cat["section"]
-        
-        ; 检查是否已存在相同规则（防重）
         isExist := false
-        try {
-            iniSectionText := IniRead(IniPath, section)
-            Loop Parse, iniSectionText, "`n", "`r" {
-                if (A_LoopField == "")
-                    continue
-                parts := StrSplit(A_LoopField, "=")
-                if (parts.Length >= 2) {
-                    valPart := parts[2]
-                    ; 抽取配置文件中的实际正则表达式
-                    if InStr(valPart, "|") {
-                        subParts := StrSplit(valPart, "|")
-                        savedRegex := Trim(subParts[subParts.Length])
-                    } else {
-                        savedRegex := Trim(valPart)
-                    }
+        keyCount := 1
+
+        inTargetSection := false
+        Loop Parse, rawIniContent, "`n", "`r" {
+            line := Trim(A_LoopField)
+            if (line == "")
+                continue
+
+            if RegExMatch(line, "^\[(.*?)\]$", &mSec) {
+                inTargetSection := (mSec[1] == section)
+                continue
+            }
+
+            if (inTargetSection) {
+                keyCount++
+
+                lastPipePos := InStr(line, "|", , , -1)
+                if (lastPipePos > 0) {
+                    savedRegex := Trim(SubStr(line, lastPipePos + 1))
                     if (savedRegex == regVal) {
                         isExist := true
                         break
@@ -350,26 +389,14 @@ SaveRulesToHistory() {
             }
         }
 
-        ; 如果规则不存在，则新增存入 INI 文件
         if (!isExist) {
-            sampleName := (cat["sample"] != "") ? SubStr(cat["sample"], 1, 20) : "未命名规则"
-            ; 计算递增 key (rule_1, rule_2 ...)
-            keyCount := 1
-            try {
-                secContent := IniRead(IniPath, section)
-                for line in StrSplit(secContent, "`n") {
-                    if (Trim(line) != "")
-                        keyCount++
-                }
-            }
-            
+            sampleName := SubStr(sampleText, 1, 20)
             ruleEntry := timeStr . " | " . sampleName . " | " . regVal
             IniWrite(ruleEntry, IniPath, section, "rule_" . keyCount)
         }
     }
 }
 
-; 从 INI 文件中读取历史规则装载到下拉菜单 (ComboBox) 中
 LoadHistoryToComboBoxes() {
     if (!FileExist(IniPath))
         return
@@ -388,15 +415,19 @@ LoadHistoryToComboBoxes() {
             secContent := IniRead(IniPath, section)
             list := []
             Loop Parse, secContent, "`n", "`r" {
-                if (A_LoopField == "")
+                line := Trim(A_LoopField)
+                if (line == "")
                     continue
-                parts := StrSplit(A_LoopField, "=")
-                if (parts.Length >= 2) {
-                    valStr := parts[2]
-                    if InStr(valStr, "|") {
-                        subParts := StrSplit(valStr, "|")
-                        ruleName := Trim(subParts[2])
-                        ruleRegex := Trim(subParts[3])
+                
+                eqPos := InStr(line, "=")
+                if (eqPos > 0) {
+                    valStr := SubStr(line, eqPos + 1)
+                    firstPipe := InStr(valStr, "|")
+                    lastPipe := InStr(valStr, "|", , , -1)
+                    
+                    if (firstPipe > 0 && lastPipe > firstPipe) {
+                        ruleName := Trim(SubStr(valStr, firstPipe + 1, lastPipe - firstPipe - 1))
+                        ruleRegex := Trim(SubStr(valStr, lastPipe + 1))
                         displayStr := "[" . ruleName . "] " . ruleRegex
                     } else {
                         displayStr := Trim(valStr)
@@ -408,28 +439,48 @@ LoadHistoryToComboBoxes() {
                 currentVal := cbox.Text
                 cbox.Delete()
                 cbox.Add(list)
+                ; 使用 Choose(0) 清除锁定的选中状态，再恢复原文本，唤醒中文输入法 (IME)
+                cbox.Choose(0)
                 cbox.Text := currentVal
             }
         }
     }
 }
 
+
 MapToJson(obj) {
     if Type(obj) != "Map" && Type(obj) != "Array"
-        return '"' . obj . '"'
+        return '"' . CleanJsonString(String(obj)) . '"'
+    
     isArr := (Type(obj) == "Array")
     str := isArr ? "[" : "{"
+    
     for k, v in obj {
-        key := isArr ? "" : '"' . k . '":'
-        if (Type(v) == "Map" || Type(v) == "Array")
+        key := isArr ? "" : '"' . CleanJsonString(String(k)) . '":'
+        if (Type(v) == "Map" || Type(v) == "Array") {
             str .= key . MapToJson(v) . ","
-        else if IsNumber(v)
+        } else if IsNumber(v) {
             str .= key . v . ","
-        else {
-            escaped := StrReplace(v, "\", "\\")
-            escaped := StrReplace(escaped, '"', '\"')
-            str .= key . '"' . escaped . '",'
+        } else {
+            str .= key . '"' . CleanJsonString(String(v)) . '",'
         }
     }
     return RTrim(str, ",") . (isArr ? "]" : "}")
+}
+
+CleanJsonString(str) {
+    str := StrReplace(str, "\", "\\")
+    str := StrReplace(str, '"', '\"')
+    str := StrReplace(str, "`r", "\r")
+    str := StrReplace(str, "`n", "\n")
+    str := StrReplace(str, "`t", "\t")
+    
+    cleanStr := ""
+    Loop Parse, str {
+        code := Ord(A_LoopField)
+        if (code >= 32) {
+            cleanStr .= A_LoopField
+        }
+    }
+    return cleanStr
 }

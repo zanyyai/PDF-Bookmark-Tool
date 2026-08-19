@@ -1,0 +1,1 @@
+﻿{"通用教材/图书":{"end_page":20,"extract_pattern":"^第[一二三四五六七八九十0-9]+章.*","header_pattern":".*目\\s*录.*","level_pattern":"^\\d+\\.\\d+","max_gap":3,"mode":"smart","start_page":1}}
