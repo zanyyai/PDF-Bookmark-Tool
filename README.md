@@ -1,2 +1,43 @@
-# PDF 智能书签写入工具 (PDF-Bookmark-Tool)
+# PDF 智能书签写入工具 (PDFTocTool-Lite)
 
+<img width="562" height="617" alt="image" src="https://github.com/user-attachments/assets/735bccec-8519-4e25-ad2a-792843244708" />
+
+如果愿意打赏，我会积极的把程序打包成exe，一键启动使用，也就无需安装python或者autohotkey了。目前只支持windows。
+
+基于 **AutoHotkey v2** 与 **Python (PyMuPDF)** 构建的轻量级、自动化 PDF 书签批量注入工具。
+
+只需粘贴杂乱的文本目录，即可通过自定义正则表达式自动完成层级清洗、匹配与页码计算，并一键精准写入 PDF 中。
+
+---
+
+## ✨ 核心特性
+
+* **JSON 强力持久化**：采用标准 JSON 格式存储历史正则表达式规则，彻底隔离正则语法冲突（如 `|`、`[` 等特殊符号），保证规则复用安全稳定。
+* **智能文本清洗与正则解析**：内置多级正则引擎（一级、二级、三级及底级书签），自动剥离点阵 `......`、`第X页` 等干扰文本，提取标准标题与印刷页码。
+* **动态层级与平滑递进**：自动计算并压缩目录深度，生成平滑的父子层级结构，杜绝 PyMuPDF 写入时抛出 `bad hierarchy level` 错误。
+* **实时页码偏移同步**：支持设置正负偏移量（`实际页码 = 印刷页码 + 偏移量`），修改偏移数字时实时重算并刷新预览。
+* **保底容错机制**：即使未匹配到上级目录，只要提取到有效页码，即自动保底降级为底级书签，确保目录全覆盖。
+* **快捷交互**：支持记忆上次选择的 PDF 路径，提供“打开所在文件夹”快速导航链接。
+
+---
+
+## 🛠️ 环境要求与依赖
+
+1. **AutoHotkey**：[v2.0 或更高版本](https://www.autohotkey.com/)[cite: 3]
+2. **Python**：Python 3.x
+3. **Python 依赖库**：`PyMuPDF`
+
+在终端安装必要的 Python 依赖：
+```bash
+pip install pymupdf
+```
+
+---
+
+## 📂 项目文件结构
+
+```text
+├── PDFTocTool_Lite.ahk    # AHK v2 前端 GUI 交互与正则表达式解析引擎
+├── pdf_engine_Lite.py     # Python 后端写入引擎 (基于 PyMuPDF)
+├── rules_history.ini      # 规则历史与配置存储 (自动生成，JSON 结构)
+└── README.md              # 项目说明文档
