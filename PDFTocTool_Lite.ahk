@@ -3,9 +3,9 @@
 
 IniPath := A_ScriptDir . "\rules_history.ini"
 
-MainGui := Gui("+Resize", "PDF 智能书签写入工具 (历史规则与路径记忆增强版)")
+MainGui := Gui("+Resize", "PDF 智能书签写入工具 (JSON 存储与强力防重版)")
 
-; 1. 文件选择区 (缩窄 Edit 宽度，留出位置给超链接)
+; 1. 文件选择区
 MainGui.Add("Text", "x10 y15 w70 h20", "PDF 文件:")
 EditPdfPath := MainGui.Add("Edit", "x80 y12 w290 h20", "")
 LinkOpenDir := MainGui.Add("Link", "x380 y15 w85 h20", '<a id="open_dir">打开所在文件夹</a>')
@@ -16,7 +16,7 @@ MainGui.Add("Text", "x10 y45 w80 h20", "页码偏移:")
 EditOffset := MainGui.Add("Edit", "x80 y42 w60 h20", "0")
 MainGui.Add("Text", "x150 y45 w390 h20", "(PDF实际页码 = 目录印刷页码 + 偏移量，支持负数)")
 
-; 3. 多级正则匹配规则配置区 (改用 ComboBox 下拉选择框)
+; 3. 多级正则匹配规则配置区
 MainGui.Add("GroupBox", "x10 y70 w540 h150", "多级书签匹配规则配置 (可下拉选择历史规则)")
 
 MainGui.Add("Text", "x20 y92 w70 h20", "一级书签:")
@@ -87,7 +87,6 @@ BrowsePDF() {
     }
 }
 
-; 打开 PDF 所在文件夹并高亮定位文件
 OpenPdfFolder() {
     PdfPath := EditPdfPath.Value
     if (PdfPath == "") {
@@ -96,7 +95,6 @@ OpenPdfFolder() {
     }
     
     if FileExist(PdfPath) {
-        ; 打开文件夹并定位选中文件
         Run('explorer.exe /select,"' . PdfPath . '"')
     } else {
         SplitPath(PdfPath, , &fdir)
@@ -108,14 +106,12 @@ OpenPdfFolder() {
     }
 }
 
-; 保存上次使用的 PDF 路径到 INI 文件
 SaveLastPdfPath(path) {
     if (path != "" && FileExist(path)) {
         IniWrite(path, IniPath, "Config", "LastPdfPath")
     }
 }
 
-; 加载上次使用的 PDF 路径
 LoadLastPdfPath() {
     if FileExist(IniPath) {
         try {
@@ -142,14 +138,20 @@ GetOffsetValue() {
     return 0
 }
 
+; 从 ComboBox 中剥离开头的 [样本名] 标注，还原纯正则表达式
 GetCleanRegex(cboxObj) {
-    rawVal := cboxObj.Text
+    rawVal := Trim(cboxObj.Text)
+    if (rawVal == "")
+        return ""
+    
     while RegExMatch(rawVal, "^\[.*?\]\s*(.*)$", &m) {
-        rawVal := m[1]
+        rawVal := Trim(m[1])
     }
-    return Trim(rawVal)
+    
+    return rawVal
 }
 
+; 核心解析逻辑（带 try-catch 安全防崩）
 ParseTextToLV() {
     rawText := EditInputText.Value
     if (Trim(rawText) == "") {
@@ -185,13 +187,13 @@ ParseTextToLV() {
             continue
 
         linePage := 0
-        if (regPage != "" && RegExMatch(lineStr, regPage, &mPage)) {
+        if (regPage != "" && IsRegMatchSafe(lineStr, regPage, &mPage)) {
             linePage := Integer(mPage[1] != "" ? mPage[1] : mPage[0])
             if (FirstMatches["Page"] == "")
                 FirstMatches["Page"] := "页码样本:" . linePage
         }
 
-        if (regL1 != "" && RegExMatch(lineStr, regL1)) {
+        if (regL1 != "" && IsRegMatchSafe(lineStr, regL1)) {
             cleanTitle := RegExReplace(lineStr, "[\.·…\s\-—–|_]*[pP|第]?\s*\d+\s*页?$", "")
             activeL1 := Trim(cleanTitle)
             activeL2 := ""
@@ -200,12 +202,11 @@ ParseTextToLV() {
             if (FirstMatches["L1"] == "")
                 FirstMatches["L1"] := activeL1
 
-            item := Map("type", "HEADER", "title", activeL1, "page", linePage, "level", 1)
-            parsedItems.Push(item)
+            parsedItems.Push(Map("type", "HEADER", "title", activeL1, "page", linePage, "level", 1))
             continue
         }
 
-        if (regL2 != "" && RegExMatch(lineStr, regL2)) {
+        if (regL2 != "" && IsRegMatchSafe(lineStr, regL2)) {
             cleanTitle := RegExReplace(lineStr, "[\.·…\s\-—–|_]*[pP|第]?\s*\d+\s*页?$", "")
             activeL2 := Trim(cleanTitle)
             activeL3 := ""
@@ -214,12 +215,11 @@ ParseTextToLV() {
                 FirstMatches["L2"] := activeL2
 
             lvl := (activeL1 != "" ? 1 : 0) + 1
-            item := Map("type", "HEADER", "title", activeL2, "page", linePage, "level", lvl)
-            parsedItems.Push(item)
+            parsedItems.Push(Map("type", "HEADER", "title", activeL2, "page", linePage, "level", lvl))
             continue
         }
 
-        if (regL3 != "" && RegExMatch(lineStr, regL3)) {
+        if (regL3 != "" && IsRegMatchSafe(lineStr, regL3)) {
             cleanTitle := RegExReplace(lineStr, "[\.·…\s\-—–|_]*[pP|第]?\s*\d+\s*页?$", "")
             activeL3 := Trim(cleanTitle)
             
@@ -227,18 +227,17 @@ ParseTextToLV() {
                 FirstMatches["L3"] := activeL3
 
             lvl := (activeL1 != "" ? 1 : 0) + (activeL2 != "" ? 1 : 0) + 1
-            item := Map("type", "HEADER", "title", activeL3, "page", linePage, "level", lvl)
-            parsedItems.Push(item)
+            parsedItems.Push(Map("type", "HEADER", "title", activeL3, "page", linePage, "level", lvl))
             continue
         }
 
-        isMatchLine := (regLine == "" || RegExMatch(lineStr, regLine))
+        isMatchLine := (regLine == "" || IsRegMatchSafe(lineStr, regLine))
         if (isMatchLine && linePage > 0) {
             if (FirstMatches["Line"] == "" && regLine != "")
                 FirstMatches["Line"] := "匹配行:" . SubStr(lineStr, 1, 15)
 
             titleStr := lineStr
-            if (regTitle != "" && RegExMatch(lineStr, regTitle, &mTitle)) {
+            if (regTitle != "" && IsRegMatchSafe(lineStr, regTitle, &mTitle)) {
                 titleStr := Trim(mTitle[1] != "" ? mTitle[1] : mTitle[0])
             }
             cleanTitle := RegExReplace(titleStr, "^[\s\t*★]+", "")
@@ -249,8 +248,7 @@ ParseTextToLV() {
             parentCount := (activeL1 != "" ? 1 : 0) + (activeL2 != "" ? 1 : 0) + (activeL3 != "" ? 1 : 0)
             leafLvl := parentCount + 1
 
-            item := Map("type", "LEAF", "title", cleanTitle, "page", linePage, "level", leafLvl)
-            parsedItems.Push(item)
+            parsedItems.Push(Map("type", "LEAF", "title", cleanTitle, "page", linePage, "level", leafLvl))
         }
     }
 
@@ -281,6 +279,17 @@ ParseTextToLV() {
 
     if (LV.GetCount() == 0) {
         MsgBox("解析完成，未找到符合条件的书签项！", "提示", 48)
+    }
+}
+
+; 安全正则匹配包裹函数
+IsRegMatchSafe(haystack, needle, &matchObj := "") {
+    if (needle == "")
+        return false
+    try {
+        return RegExMatch(haystack, needle, &matchObj)
+    } catch {
+        return false
     }
 }
 
@@ -340,6 +349,7 @@ WriteToPDF() {
     }
 }
 
+; 使用 JSON 存入 INI 历史文件 (彻底解决转义与分隔符冲突)
 SaveRulesToHistory() {
     categories := [
         Map("section", "RegexL1", "cbox", CboxRegexL1, "sample", FirstMatches["L1"]),
@@ -357,6 +367,7 @@ SaveRulesToHistory() {
         regVal := GetCleanRegex(cat["cbox"])
         sampleText := Trim(cat["sample"])
 
+        ; 未成功匹配任何样本不存入
         if (regVal == "" || sampleText == "")
             continue
 
@@ -377,13 +388,15 @@ SaveRulesToHistory() {
 
             if (inTargetSection) {
                 keyCount++
-
-                lastPipePos := InStr(line, "|", , , -1)
-                if (lastPipePos > 0) {
-                    savedRegex := Trim(SubStr(line, lastPipePos + 1))
-                    if (savedRegex == regVal) {
-                        isExist := true
-                        break
+                eqPos := InStr(line, "=")
+                if (eqPos > 0) {
+                    valJson := SubStr(line, eqPos + 1)
+                    if RegExMatch(valJson, '"regex":\s*"(.*?)"', &mReg) {
+                        savedRegex := UnescapeJsonStr(mReg[1])
+                        if (savedRegex == regVal) {
+                            isExist := true
+                            break
+                        }
                     }
                 }
             }
@@ -391,12 +404,14 @@ SaveRulesToHistory() {
 
         if (!isExist) {
             sampleName := SubStr(sampleText, 1, 20)
-            ruleEntry := timeStr . " | " . sampleName . " | " . regVal
-            IniWrite(ruleEntry, IniPath, section, "rule_" . keyCount)
+            ruleMap := Map("time", timeStr, "name", sampleName, "regex", regVal)
+            jsonVal := MapToJson(ruleMap)
+            IniWrite(jsonVal, IniPath, section, "rule_" . keyCount)
         }
     }
 }
 
+; 解析 INI 里的 JSON 历史数据并刷入 ComboBox
 LoadHistoryToComboBoxes() {
     if (!FileExist(IniPath))
         return
@@ -421,32 +436,45 @@ LoadHistoryToComboBoxes() {
                 
                 eqPos := InStr(line, "=")
                 if (eqPos > 0) {
-                    valStr := SubStr(line, eqPos + 1)
-                    firstPipe := InStr(valStr, "|")
-                    lastPipe := InStr(valStr, "|", , , -1)
+                    jsonStr := SubStr(line, eqPos + 1)
                     
-                    if (firstPipe > 0 && lastPipe > firstPipe) {
-                        ruleName := Trim(SubStr(valStr, firstPipe + 1, lastPipe - firstPipe - 1))
-                        ruleRegex := Trim(SubStr(valStr, lastPipe + 1))
-                        displayStr := "[" . ruleName . "] " . ruleRegex
-                    } else {
-                        displayStr := Trim(valStr)
+                    ; 正则提取 JSON 字段
+                    nameVal := ""
+                    regexVal := ""
+                    if RegExMatch(jsonStr, '"name":\s*"(.*?)"', &mName)
+                        nameVal := UnescapeJsonStr(mName[1])
+                    if RegExMatch(jsonStr, '"regex":\s*"(.*?)"', &mRegex)
+                        regexVal := UnescapeJsonStr(mRegex[1])
+                    
+                    if (regexVal != "") {
+                        displayStr := (nameVal != "") ? "[" . nameVal . "] " . regexVal : regexVal
+                        list.Push(displayStr)
                     }
-                    list.Push(displayStr)
                 }
             }
             if (list.Length > 0) {
                 currentVal := cbox.Text
                 cbox.Delete()
                 cbox.Add(list)
-                ; 使用 Choose(0) 清除锁定的选中状态，再恢复原文本，唤醒中文输入法 (IME)
-                cbox.Choose(0)
+                cbox.Choose(0) ; 清除锁定的编辑状态，唤醒 IME 输入法
                 cbox.Text := currentVal
             }
         }
     }
 }
 
+; 安全反转义 JSON 内部转义字符串
+UnescapeJsonStr(str) {
+    str := StrReplace(str, '\"', '"')
+    str := StrReplace(str, '\\', '\')
+    str := StrReplace(str, '\/', '/')
+    str := StrReplace(str, '\b', '`b')
+    str := StrReplace(str, '\f', '`f')
+    str := StrReplace(str, '\n', '`n')
+    str := StrReplace(str, '\r', '`r')
+    str := StrReplace(str, '\t', '`t')
+    return str
+}
 
 MapToJson(obj) {
     if Type(obj) != "Map" && Type(obj) != "Array"
