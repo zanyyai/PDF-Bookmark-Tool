@@ -1,6 +1,5 @@
 # PDF 智能书签写入工具 (PDFTocTool-Lite)
 
-<img width="562" height="617" alt="image" src="https://github.com/user-attachments/assets/735bccec-8519-4e25-ad2a-792843244708" />
 
 如果愿意打赏，我会积极的把程序打包成exe，一键启动使用，也就无需安装python或者autohotkey了。目前只支持windows。
 
